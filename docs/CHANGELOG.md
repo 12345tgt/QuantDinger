@@ -4,6 +4,30 @@ This document records version updates, new features, bug fixes, and database mig
 
 ---
 
+## quantdinger-mcp 0.2.0 (2026-05-29) — PyPI package
+
+Standalone MCP server release (install: `pip install quantdinger-mcp==0.2.0` / `uvx quantdinger-mcp@0.2.0`).
+
+### Added
+- **Indicator workspace tools**: `get_indicator_authoring_contract`, `validate_indicator_code`, `save_indicator`, `list_indicators`, `get_indicator`
+- **Strategy tools**: `create_strategy`, `update_strategy` (blocks `status=running` client-side)
+- **Job helpers**: `list_jobs`, `wait_for_job`, `stream_job_until_done` (bounded SSE)
+- **Experiments**: `submit_experiment_pipeline`, `submit_ai_optimize` (requires `confirm_llm_usage=true`)
+- **Portfolio (read-only)**: `list_portfolio_positions`, `list_paper_orders`
+- **Connectivity**: `check_health` (no token)
+- **Backtest**: `strict_mode`, `strategy_config`, `indicator_params` on `submit_backtest`
+
+### Security
+- Response redaction for credential-like JSON fields (`api_key`, `secret`, `passphrase`, …)
+- Indicator Python source capped at **512 KiB** (client + Gateway)
+- Trading (`quick-trade/*`) and admin APIs remain **not exposed** via MCP
+
+### Requires
+- QuantDinger backend with Agent Gateway `/api/agent/v1` (indicator routes from this repo)
+- Agent token scopes: **R + W + B** recommended for full indicator workflow
+
+---
+
 ## V3.0.17 (2026-05-28) — Login security alerts, account login history, schema consolidation, live-trading hardening
 
 This release focuses on **account security UX**, **cleaner database migrations**, and a large batch of **live / quick-trade reliability** fixes across HTX, spot sizing, and the indicator sandbox.

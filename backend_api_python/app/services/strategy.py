@@ -1128,6 +1128,14 @@ class StrategyService:
         notification_config = payload.get('notification_config') or {}
 
         indicator_config = payload.get('indicator_config') or {}
+        if strategy_type == 'IndicatorStrategy':
+            from app.services.indicator_workspace import link_indicator_config
+            indicator_config = link_indicator_config(
+                int(user_id or 1),
+                indicator_config,
+                auto_save=True,
+            )
+            payload['indicator_config'] = indicator_config
         trading_config = _strip_legacy_risk_pct_basis(
             _apply_default_strict_mode(payload.get('trading_config') or {})
         )

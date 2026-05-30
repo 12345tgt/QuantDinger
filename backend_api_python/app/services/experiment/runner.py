@@ -799,8 +799,12 @@ class ExperimentRunnerService:
 
     @staticmethod
     def _parse_dates(base: Dict[str, Any]) -> tuple[datetime, datetime]:
-        start_date = datetime.strptime(str(base.get('startDate')), '%Y-%m-%d')
-        end_date = datetime.strptime(str(base.get('endDate')), '%Y-%m-%d').replace(hour=23, minute=59, second=59)
+        start_raw = base.get('startDate') or base.get('start_date')
+        end_raw = base.get('endDate') or base.get('end_date')
+        if not start_raw or not end_raw:
+            raise ValueError('startDate/start_date and endDate/end_date are required (YYYY-MM-DD)')
+        start_date = datetime.strptime(str(start_raw), '%Y-%m-%d')
+        end_date = datetime.strptime(str(end_raw), '%Y-%m-%d').replace(hour=23, minute=59, second=59)
         return start_date, end_date
 
     @staticmethod

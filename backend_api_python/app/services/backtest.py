@@ -793,6 +793,12 @@ class BacktestService:
         # very last step, masking otherwise-correct results.
         exec_cfg = cfg.get('execution') or {}
         signal_timing = str(exec_cfg.get('signalTiming') or 'next_bar_open').strip().lower()
+        same_bar_timing = signal_timing in (
+            'same_bar_close', 'current_bar_close', 'bar_close', 'close',
+        )
+        # Non-strict (same_bar_close): fill at the signal bar's close on the exec TF.
+        # Strict / next_bar_open: fill at the open of the first exec bar after the signal bar.
+        signal_fill_mode = 'close' if same_bar_timing else 'open'
 
         # Funding rate simulation. Off by default for backward compatibility.
         # Annual rate accepts both decimal (0.10 = 10%) and percentage (10 = 10%).
@@ -932,10 +938,13 @@ class BacktestService:
         
         logger.info(f"Signal timeframe: {signal_timeframe} ({signal_tf_seconds}s), Exec timeframe: {exec_timeframe} ({exec_tf_seconds}s)")
         
-        # Preprocessing: create signal queue sorted by effective time
-        # Each signal executes at the open of the next execution candle after its candle closes
-        logger.info("Initializing signal queue...")
-        signal_queue = []  # [(effective_time, signal_type, signal_bar_time), ...]
+        # Preprocessing: create signal queue sorted by effective time.
+        # next_bar_open → first exec-bar open after signal bar closes.
+        # same_bar_close → last exec-bar close within the signal bar.
+        logger.info(
+            f"Initializing signal queue (fill_mode={signal_fill_mode}, signal_timing={signal_timing})..."
+        )
+        signal_queue = []  # [(sig_bar_end, signal_type, signal_bar_time, fill_mode), ...]
         
         # Debug: check signal values
         debug_signal_counts = {'open_long': 0, 'close_long': 0, 'open_short': 0, 'close_short': 0}
@@ -969,16 +978,16 @@ class BacktestService:
                 continue
             
             if ol:
-                signal_queue.append((sig_end, 'open_long', sig_time))
+                signal_queue.append((sig_end, 'open_long', sig_time, signal_fill_mode))
                 debug_signal_counts['open_long'] += 1
             if cl:
-                signal_queue.append((sig_end, 'close_long', sig_time))
+                signal_queue.append((sig_end, 'close_long', sig_time, signal_fill_mode))
                 debug_signal_counts['close_long'] += 1
             if os:
-                signal_queue.append((sig_end, 'open_short', sig_time))
+                signal_queue.append((sig_end, 'open_short', sig_time, signal_fill_mode))
                 debug_signal_counts['open_short'] += 1
             if cs:
-                signal_queue.append((sig_end, 'close_short', sig_time))
+                signal_queue.append((sig_end, 'close_short', sig_time, signal_fill_mode))
                 debug_signal_counts['close_short'] += 1
         
         logger.info(f"Debug signal counts from queue building: {debug_signal_counts}")
@@ -1005,22 +1014,31 @@ class BacktestService:
         
         logger.info(f"Signal queue built: total {len(signal_queue)} signals")
         if signal_queue:
-            logger.info(f"First signal: {signal_queue[0][1]} @ {signal_queue[0][0]} (from {signal_queue[0][2]})")
-            logger.info(f"Last signal: {signal_queue[-1][1]} @ {signal_queue[-1][0]} (from {signal_queue[-1][2]})")
+            logger.info(
+                f"First signal: {signal_queue[0][1]} @ {signal_queue[0][0]} "
+                f"(from {signal_queue[0][2]}, fill={signal_queue[0][3]})"
+            )
+            logger.info(
+                f"Last signal: {signal_queue[-1][1]} @ {signal_queue[-1][0]} "
+                f"(from {signal_queue[-1][2]}, fill={signal_queue[-1][3]})"
+            )
         else:
             logger.error("Signal queue is empty! Backtest will fail. Check indicator code to ensure it generates buy/sell signals.")
         
         # Count signals by type
         signal_counts = {}
-        for _, sig_type, _ in signal_queue:
+        for _, sig_type, _, _ in signal_queue:
             signal_counts[sig_type] = signal_counts.get(sig_type, 0) + 1
         logger.info(f"Signal counts: {signal_counts}")
         
         # Log first few signal details for debugging
         if signal_queue:
             logger.info(f"First 3 signals details:")
-            for idx, (sig_time, sig_type, sig_bar_time) in enumerate(signal_queue[:3]):
-                logger.info(f"  Signal {idx+1}: {sig_type} @ effective_time={sig_time}, from_bar={sig_bar_time}")
+            for idx, (sig_time, sig_type, sig_bar_time, fill_mode) in enumerate(signal_queue[:3]):
+                logger.info(
+                    f"  Signal {idx+1}: {sig_type} @ effective_time={sig_time}, "
+                    f"from_bar={sig_bar_time}, fill={fill_mode}"
+                )
         
         # Log execution data range
         if len(df_exec) > 0:
@@ -1034,6 +1052,7 @@ class BacktestService:
         # Current pending signal to execute
         pending_signal = None  # ('open_long', 'close_long', 'open_short', 'close_short')
         pending_signal_time = None  # Signal effective time
+        pending_fill_mode = 'open'  # 'open' | 'close'
         executed_trades_count = 0  # Debug counter
         
         # Progress logging for large datasets
@@ -1122,16 +1141,38 @@ class BacktestService:
             price_path = self._infer_candle_path(open_, high, low, close)
             
             # Check if new signal becomes effective
-            # Signal executes at the first execution candle open after its candle closes
+            try:
+                bar_ts_for_sig = int(timestamp.timestamp())
+            except Exception:
+                bar_ts_for_sig = None
+            bar_end_ts_for_sig = (
+                bar_ts_for_sig + exec_tf_seconds if bar_ts_for_sig is not None else None
+            )
+
             while signal_queue_idx < len(signal_queue):
-                sig_effective_time, sig_type, sig_bar_time = signal_queue[signal_queue_idx]
+                sig_effective_time, sig_type, sig_bar_time, fill_mode = signal_queue[signal_queue_idx]
+                try:
+                    sig_eff_ts = int(pd.Timestamp(sig_effective_time).timestamp())
+                except Exception:
+                    sig_eff_ts = None
                 
                 # Debug: log first few signal checks
                 if i < 10 and signal_queue_idx < len(signal_queue):
                     logger.debug(f"[i={i}] Checking signal #{signal_queue_idx}: {sig_type} @ {sig_effective_time}, exec_time={timestamp}, position={position}")
                 
-                # If current exec candle time >= signal effective time, signal can execute
-                if timestamp >= sig_effective_time:
+                if fill_mode == 'close':
+                    # Last exec candle that completes the signal bar: bar_end >= sig_bar_end > bar_open
+                    ready = (
+                        bar_end_ts_for_sig is not None
+                        and bar_ts_for_sig is not None
+                        and sig_eff_ts is not None
+                        and bar_end_ts_for_sig >= sig_eff_ts
+                        and bar_ts_for_sig < sig_eff_ts
+                    )
+                else:
+                    ready = timestamp >= sig_effective_time
+
+                if ready:
                     # Check if signal can execute (based on current position)
                     # In both mode, open_long can execute even with short position (will auto-close first)
                     # Similarly, open_short can execute even with long position
@@ -1158,9 +1199,13 @@ class BacktestService:
                     if can_execute:
                         pending_signal = sig_type
                         pending_signal_time = sig_effective_time
+                        pending_fill_mode = fill_mode
                         signal_queue_idx += 1
                         if executed_trades_count < 3:
-                            logger.info(f"Signal ready: {sig_type} @ {timestamp} (effective_time={sig_effective_time})")
+                            logger.info(
+                                f"Signal ready: {sig_type} @ {timestamp} "
+                                f"(effective_time={sig_effective_time}, fill={fill_mode})"
+                            )
                         break
                     else:
                         signal_queue_idx += 1
@@ -1376,20 +1421,30 @@ class BacktestService:
                         pending_signal = None
                         continue
                 
-                # 2. Execute pending signal (at open price)
-                if pending_signal and path_price == open_:
+                # 2. Execute pending signal (next-bar open or same-bar close)
+                if pending_signal:
+                    fill_now = (
+                        (pending_fill_mode == 'open' and path_price == open_)
+                        or (pending_fill_mode == 'close' and path_price == close)
+                    )
+                    if not fill_now:
+                        continue
+                    ref_px = close if pending_fill_mode == 'close' else open_
                     both_mode_active = norm_signals.get('_both_mode', False)
                     if executed_trades_count < 10:
-                        logger.info(f"Executing pending signal: {pending_signal} @ {timestamp}, path_price={path_price}, open={open_}, position={position}")
+                        logger.info(
+                            f"Executing pending signal: {pending_signal} @ {timestamp}, "
+                            f"fill={pending_fill_mode}, ref_px={ref_px}, position={position}"
+                        )
                     
                     # open_long: In both mode, first close short if any, then open long
                     if pending_signal == 'open_long' and (position == 0 or (both_mode_active and position < 0)):
-                        exec_price = open_ * (1 + slippage)
+                        exec_price = ref_px * (1 + slippage)
                         
                         # If in both mode and have short position, close it first
                         if both_mode_active and position < 0:
                             shares_to_close = abs(position)
-                            close_price = open_ * (1 + slippage)
+                            close_price = ref_px * (1 + slippage)
                             close_commission = shares_to_close * close_price * commission
                             close_profit = (entry_price - close_price) * shares_to_close - close_commission
                             capital += close_profit
@@ -1448,7 +1503,7 @@ class BacktestService:
                         pending_signal = None
                     
                     elif pending_signal == 'close_long' and position > 0:
-                        exec_price = open_ * (1 - slippage)
+                        exec_price = ref_px * (1 - slippage)
                         commission_fee = position * exec_price * commission
                         profit = (exec_price - entry_price) * position - commission_fee
                         capital += profit
@@ -1476,11 +1531,11 @@ class BacktestService:
                     
                     # open_short: In both mode, first close long if any, then open short
                     elif pending_signal == 'open_short' and (position == 0 or (both_mode_active and position > 0)):
-                        exec_price = open_ * (1 - slippage)
+                        exec_price = ref_px * (1 - slippage)
                         
                         # If in both mode and have long position, close it first
                         if both_mode_active and position > 0:
-                            close_price = open_ * (1 - slippage)
+                            close_price = ref_px * (1 - slippage)
                             close_commission = position * close_price * commission
                             close_profit = (close_price - entry_price) * position - close_commission
                             capital += close_profit
@@ -1540,7 +1595,7 @@ class BacktestService:
                     
                     elif pending_signal == 'close_short' and position < 0:
                         shares = abs(position)
-                        exec_price = open_ * (1 + slippage)
+                        exec_price = ref_px * (1 + slippage)
                         commission_fee = shares * exec_price * commission
                         profit = (entry_price - exec_price) * shares - commission_fee
                         capital += profit
