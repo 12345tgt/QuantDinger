@@ -105,8 +105,84 @@ Two-tier: Redis when `CACHE_ENABLED=true` (default in Docker), falling back sile
 
 ## Git workflow (this fork)
 
-- `main` — mirrors `upstream/main` (original author), used only for syncing
-- `stable` — this fork's production‑ready code
-- `dev` — active development branch; merge into `stable` when features are stable
+### Remotes
 
-Sync upstream: `git checkout main && git fetch upstream && git merge upstream/main`, then `git checkout dev && git merge main`.
+- `origin` = `git@github.com:12345tgt/QuantDinger.git` (this fork)
+- `upstream` = `git@github.com:brokermr810/QuantDinger.git` (original author)
+
+### Branch strategy
+
+```
+upstream/main  ──→  main (upstream mirror)     ← NEVER commit here; only pull/merge from upstream
+                     │
+                     └──→ stable (production)  ← only accept merges from dev, never commit directly
+                              │
+                              └──→ dev (active) ← all development happens here
+```
+
+| Branch | Purpose | Direct commits? |
+|--------|---------|-----------------|
+| `main` | Exact mirror of `upstream/main` | **Never** — only `git merge upstream/main` |
+| `stable` | This fork's verified, production‑ready code | **Never** — only `git merge dev` |
+| `dev` | Daily development | Yes — all feature/fix work goes here |
+
+### Day-to-day development
+
+```bash
+# Always work on dev
+git checkout dev
+# ... write code ...
+git add .
+git commit -m "feat: description of change"
+git push origin dev
+```
+
+### Merging dev into stable (features verified, tests pass)
+
+```bash
+git checkout stable
+git merge dev
+git push origin stable
+```
+
+### Syncing upstream updates (selective, on demand)
+
+```bash
+# Step 1: pull latest upstream into main
+git checkout main
+git fetch upstream
+git merge upstream/main
+git push origin main
+
+# Step 2: review the diff before merging into dev
+git checkout dev
+git merge main --no-commit
+# Inspect conflicts, test thoroughly
+# If okay:
+git commit -m "merge: sync upstream/main into dev"
+# If too many conflicts, abort:
+#   git merge --abort
+#   # then cherry-pick specific commits instead
+
+# Step 3: after dev is stable with the merged changes
+git checkout stable
+git merge dev
+git push origin stable
+```
+
+### Cherry-pick instead of full merge (when selective sync is preferred)
+
+```bash
+git checkout dev
+git log main..upstream/main --oneline   # see what's new upstream
+git cherry-pick <specific-commit-hash>  # pick only what you need
+git push origin dev
+```
+
+### General rules
+
+- **Never** commit directly to `main` or `stable` — only merge into them
+- **Never** force-push `main`, `stable`, or `dev` — these are shared branches
+- **Test before merging** — always verify `docker compose up --build` succeeds on `dev` before merging into `stable`
+- **`stable` should always be deployable** — if something on `dev` is half‑done, don't merge it yet
+- **Resolve conflicts on `dev`**, not on `main` or `stable`
