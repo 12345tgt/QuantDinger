@@ -11,16 +11,7 @@ from typing import Optional
 
 
 SUPPORTED_LANGS = {
-    "en-US",
     "zh-CN",
-    "zh-TW",
-    "ja-JP",
-    "ko-KR",
-    "vi-VN",
-    "th-TH",
-    "ar-SA",
-    "fr-FR",
-    "de-DE",
 }
 
 
@@ -53,7 +44,7 @@ def _normalize_lang(raw: Optional[str]) -> Optional[str]:
     return None
 
 
-def detect_request_language(flask_request, body: Optional[dict] = None, default: str = "en-US") -> str:
+def detect_request_language(flask_request, body: Optional[dict] = None, default: str = "zh-CN") -> str:
     """
     Detect language for the current request.
 

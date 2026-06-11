@@ -46,15 +46,6 @@ logger = get_logger(__name__)
 # 如果未来加新语言，在这里加一行即可，翻译会自动覆盖。
 SUPPORTED_LANGUAGES: Dict[str, str] = {
     'zh-CN': 'Simplified Chinese',
-    'zh-TW': 'Traditional Chinese',
-    'en-US': 'English',
-    'ar-SA': 'Arabic',
-    'de-DE': 'German',
-    'fr-FR': 'French',
-    'ja-JP': 'Japanese',
-    'ko-KR': 'Korean',
-    'th-TH': 'Thai',
-    'vi-VN': 'Vietnamese',
 }
 
 
