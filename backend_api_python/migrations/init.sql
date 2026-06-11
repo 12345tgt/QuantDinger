@@ -1336,6 +1336,53 @@ CREATE INDEX IF NOT EXISTS idx_agent_paper_orders_token ON qd_agent_paper_orders
 ALTER TABLE qd_agent_jobs ADD COLUMN IF NOT EXISTS progress JSONB;
 
 -- =============================================================================
+-- 35. Timing Indicator System (择时叠加系统)
+-- =============================================================================
+
+-- Timing indicators: user-defined market timing signals
+CREATE TABLE IF NOT EXISTS qd_timing_indicators (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    description TEXT DEFAULT '',
+    indicator_code TEXT NOT NULL,
+    symbol VARCHAR(60) NOT NULL DEFAULT '',         -- 数据标的,如 0AMV / 999999
+    market VARCHAR(40) NOT NULL DEFAULT 'CNStock',  -- 数据源
+    timeframe VARCHAR(8) NOT NULL DEFAULT '1D',     -- K线周期
+    output_type VARCHAR(20) NOT NULL DEFAULT 'binary', -- binary(多头/空头) / multiplier(0~1)
+    bull_multiplier DECIMAL(5,2) NOT NULL DEFAULT 1.0,
+    bear_multiplier DECIMAL(5,2) NOT NULL DEFAULT 0.5,
+    params JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_timing_ind_user ON qd_timing_indicators(user_id);
+
+-- Timing profiles: a named combination of timing indicators
+CREATE TABLE IF NOT EXISTS qd_timing_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES qd_users(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    stack_mode VARCHAR(20) NOT NULL DEFAULT 'multiply', -- multiply(乘积累加) / require_all(全多头)
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_timing_profile_user ON qd_timing_profiles(user_id);
+
+-- Timing profile items: which indicators belong to a profile
+CREATE TABLE IF NOT EXISTS qd_timing_profile_items (
+    id SERIAL PRIMARY KEY,
+    profile_id INTEGER NOT NULL REFERENCES qd_timing_profiles(id) ON DELETE CASCADE,
+    timing_indicator_id INTEGER NOT NULL REFERENCES qd_timing_indicators(id) ON DELETE CASCADE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (profile_id, timing_indicator_id)
+);
+CREATE INDEX IF NOT EXISTS idx_timing_pi_profile ON qd_timing_profile_items(profile_id);
+
+-- Add timing profile reference to strategies
+ALTER TABLE qd_strategies_trading ADD COLUMN IF NOT EXISTS timing_profile_id INTEGER REFERENCES qd_timing_profiles(id) ON DELETE SET NULL;
+
+-- =============================================================================
 -- Completion Notice
 -- =============================================================================
 DO $$

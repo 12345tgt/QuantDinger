@@ -600,6 +600,7 @@ class BacktestService:
         indicator_params: Optional[Dict[str, Any]] = None,
         user_id: int = 1,
         indicator_id: Optional[int] = None,
+        timing_multiplier_series: Optional["pd.Series"] = None,
     ) -> Dict[str, Any]:
         """
         Multi-timeframe backtest.
@@ -1974,6 +1975,7 @@ class BacktestService:
         indicator_params: Optional[Dict[str, Any]] = None,
         user_id: int = 1,
         indicator_id: Optional[int] = None,
+        timing_multiplier_series: Optional["pd.Series"] = None,
     ) -> Dict[str, Any]:
         """
         Live-aligned backtest: strict → closed-bar signals + next-bar open;
@@ -2004,6 +2006,7 @@ class BacktestService:
                 indicator_params=indicator_params,
                 user_id=user_id,
                 indicator_id=indicator_id,
+                timing_multiplier_series=timing_multiplier_series,
             )
             result['precision_info'] = precision_info_for_run(
                 strict_mode=True, strategy_timeframe=timeframe,
@@ -3697,9 +3700,18 @@ class BacktestService:
                         position_pct = position_size_arr[i]
                     if position_pct is not None and position_pct > 0 and position_pct < 1:
                         use_capital = capital * position_pct
-                        shares = (use_capital * leverage) / exec_price
                     else:
-                        shares = (capital * leverage) / exec_price
+                        use_capital = capital
+
+                    # Timing multiplier
+                    if timing_multiplier_series is not None and len(timing_multiplier_series) > 0:
+                        try:
+                            tm = float(timing_multiplier_series.get(timestamp, 1.0))
+                        except Exception:
+                            tm = 1.0
+                        use_capital = use_capital * tm
+
+                    shares = (use_capital * leverage) / exec_price
                     
                     commission_fee = shares * exec_price * commission
                     
@@ -3822,9 +3834,18 @@ class BacktestService:
                         position_pct = position_size_arr[i]
                     if position_pct is not None and position_pct > 0 and position_pct < 1:
                         use_capital = capital * position_pct
-                        shares = (use_capital * leverage) / exec_price
                     else:
-                        shares = (capital * leverage) / exec_price
+                        use_capital = capital
+
+                    # Timing multiplier
+                    if timing_multiplier_series is not None and len(timing_multiplier_series) > 0:
+                        try:
+                            tm = float(timing_multiplier_series.get(timestamp, 1.0))
+                        except Exception:
+                            tm = 1.0
+                        use_capital = use_capital * tm
+
+                    shares = (use_capital * leverage) / exec_price
                     
                     commission_fee = shares * exec_price * commission
                     

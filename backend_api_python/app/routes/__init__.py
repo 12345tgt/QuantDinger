@@ -11,3 +11,11 @@ def register_routes(app: Flask):
 
     from app.routes.agent_v1 import register as register_agent_v1
     register_agent_v1(app)
+
+    # Batch backtest web UI (plain Blueprint, not OpenAPI)
+    from app.routes.batch_backtest import batch_bp
+    app.register_blueprint(batch_bp)
+
+    # Timing indicator management
+    from app.routes.timing import timing_bp
+    app.register_blueprint(timing_bp)

@@ -189,6 +189,25 @@ def run_backtest():
             f"strict_mode={strict_mode}"
         )
 
+        # Timing profile: pre-compute multiplier series for offset adjustment
+        timing_multiplier_series = None
+        timing_profile_id = data.get('timingProfileId')
+        if timing_profile_id:
+            from app.services.timing_service import get_timing_service
+            ts = get_timing_service()
+            timing_df = ts.compute_timing(
+                profile_id=int(timing_profile_id),
+                user_id=user_id,
+                start_date=start_date_str,
+                end_date=end_date_str,
+            )
+            if timing_df is not None and 'multiplier' in timing_df.columns:
+                timing_multiplier_series = timing_df['multiplier']
+                logger.info(
+                    f"Timing profile {timing_profile_id} applied: "
+                    f"mean_multiplier={float(timing_multiplier_series.mean()):.2f}"
+                )
+
         result = backtest_service.run_aligned(
             strict_mode=strict_mode,
             indicator_code=indicator_code,
@@ -203,6 +222,7 @@ def run_backtest():
             leverage=leverage,
             trade_direction=trade_direction,
             strategy_config=strategy_config,
+            timing_multiplier_series=timing_multiplier_series,
         )
 
         ea = dict(result.get('executionAssumptions') or {})
