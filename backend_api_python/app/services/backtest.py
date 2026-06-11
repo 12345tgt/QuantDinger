@@ -1865,6 +1865,7 @@ class BacktestService:
         leverage: int,
         trade_direction: str,
         strategy_config: Optional[Dict[str, Any]] = None,
+        timing_multiplier_series: Optional["pd.Series"] = None,
     ) -> Dict[str, Any]:
         df = self._fetch_kline_data(market, symbol, timeframe, start_date, end_date)
         if df.empty:
@@ -1878,7 +1879,8 @@ class BacktestService:
         })
         script_logs = signals.pop('logs', [])
         equity_curve, trades, total_commission = self._simulate_trading(
-            df, signals, initial_capital, commission, slippage, leverage, trade_direction, strategy_config
+            df, signals, initial_capital, commission, slippage, leverage, trade_direction, strategy_config,
+            timing_multiplier_series=timing_multiplier_series,
         )
         metrics = self._calculate_metrics(equity_curve, trades, initial_capital, timeframe, start_date, end_date, total_commission)
         result = self._format_result(metrics, equity_curve, trades)
@@ -2114,10 +2116,11 @@ class BacktestService:
         indicator_params: Optional[Dict[str, Any]] = None,
         user_id: int = 1,
         indicator_id: Optional[int] = None,
+        timing_multiplier_series: Optional["pd.Series"] = None,
     ) -> Dict[str, Any]:
         """
         Run backtest.
-        
+
         Args:
             indicator_code: Indicator code
             market: Market type
@@ -2161,7 +2164,8 @@ class BacktestService:
         
         # 3. Simulate trading
         equity_curve, trades, total_commission = self._simulate_trading(
-            df, signals, initial_capital, commission, slippage, leverage, trade_direction, strategy_config
+            df, signals, initial_capital, commission, slippage, leverage, trade_direction, strategy_config,
+            timing_multiplier_series=timing_multiplier_series,
         )
 
         exec_cfg = (strategy_config or {}).get('execution') or {}
@@ -2737,7 +2741,8 @@ class BacktestService:
         slippage: float,
         leverage: int = 1,
         trade_direction: str = 'long',
-        strategy_config: Optional[Dict[str, Any]] = None
+        strategy_config: Optional[Dict[str, Any]] = None,
+        timing_multiplier_series: Optional["pd.Series"] = None,
     ) -> tuple:
         """
         Simulate trading.
@@ -2813,7 +2818,10 @@ class BacktestService:
             f"signals open_long={ol} close_long={cl} open_short={os_} close_short={cs}, "
             f"direction={trade_direction}"
         )
-        return self._simulate_trading_new_format(df, norm, initial_capital, commission, slippage, leverage, trade_direction, strategy_config)
+        return self._simulate_trading_new_format(
+            df, norm, initial_capital, commission, slippage, leverage, trade_direction, strategy_config,
+            timing_multiplier_series=timing_multiplier_series,
+        )
 
     def _simulate_trading_new_format(
         self,
@@ -2824,7 +2832,8 @@ class BacktestService:
         slippage: float,
         leverage: int = 1,
         trade_direction: str = 'both',
-        strategy_config: Optional[Dict[str, Any]] = None
+        strategy_config: Optional[Dict[str, Any]] = None,
+        timing_multiplier_series: Optional["pd.Series"] = None,
     ) -> tuple:
         """
         Simulate trading with 4-way signal format (supports position management and scaling).
