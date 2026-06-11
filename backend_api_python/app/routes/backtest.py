@@ -200,6 +200,7 @@ def run_backtest():
                 user_id=user_id,
                 start_date=start_date_str,
                 end_date=end_date_str,
+                override_symbol=symbol,
             )
             if timing_df is not None and 'multiplier' in timing_df.columns:
                 timing_multiplier_series = timing_df['multiplier']

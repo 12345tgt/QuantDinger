@@ -30,7 +30,7 @@ class TimingService:
             cur.execute(
                 "SELECT id, name, description, symbol, market, timeframe, "
                 "output_type, bull_multiplier, bear_multiplier, params, created_at "
-                "FROM qd_timing_indicators WHERE user_id = ? ORDER BY id",
+                "FROM qd_timing_indicators WHERE user_id = %s ORDER BY id",
                 (user_id,)
             )
             rows = cur.fetchall() or []
@@ -68,13 +68,14 @@ class TimingService:
             cur = db.cursor()
             if indicator_id:
                 cur.execute(
-                    "UPDATE qd_timing_indicators SET name=?, description=?, indicator_code=?, "
-                    "symbol=?, market=?, timeframe=?, output_type=?, bull_multiplier=?, "
-                    "bear_multiplier=?, params=?, updated_at=NOW() "
-                    "WHERE id=? AND user_id=?",
+                    "UPDATE qd_timing_indicators SET name=%s, description=%s, indicator_code=%s, "
+                    "symbol=%s, market=%s, timeframe=%s, output_type=%s, bull_multiplier=%s, "
+                    "bear_multiplier=%s, params=%s, updated_at=NOW() "
+                    "WHERE id=%s AND user_id=%s",
                     (name, desc, code, symbol, market, timeframe, output_type,
                      bull_mult, bear_mult, params_json, indicator_id, user_id)
                 )
+                db.commit()
                 cur.close()
                 return int(indicator_id)
             else:
@@ -82,11 +83,12 @@ class TimingService:
                     "INSERT INTO qd_timing_indicators "
                     "(user_id, name, description, indicator_code, symbol, market, timeframe, "
                     "output_type, bull_multiplier, bear_multiplier, params) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                     (user_id, name, desc, code, symbol, market, timeframe,
                      output_type, bull_mult, bear_mult, params_json)
                 )
                 new_id = cur.fetchone()["id"]
+                db.commit()
                 cur.close()
                 return new_id
 
@@ -94,10 +96,11 @@ class TimingService:
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
-                "DELETE FROM qd_timing_indicators WHERE id = ? AND user_id = ?",
+                "DELETE FROM qd_timing_indicators WHERE id = %s AND user_id = %s",
                 (indicator_id, user_id)
             )
             affected = cur.rowcount
+            db.commit()
             cur.close()
         return affected > 0
 
@@ -112,10 +115,10 @@ class TimingService:
                 "  'id', i.id, 'name', i.name, 'symbol', i.symbol, "
                 "  'output_type', i.output_type, "
                 "  'bull_multiplier', i.bull_multiplier, 'bear_multiplier', i.bear_multiplier"
-                ")) FROM qd_timing_profile_items pi "
+                ") ORDER BY pi.sort_order) FROM qd_timing_profile_items pi "
                 "JOIN qd_timing_indicators i ON i.id = pi.timing_indicator_id "
-                "WHERE pi.profile_id = p.id ORDER BY pi.sort_order) AS items "
-                "FROM qd_timing_profiles p WHERE p.user_id = ? ORDER BY p.id",
+                "WHERE pi.profile_id = p.id) AS items "
+                "FROM qd_timing_profiles p WHERE p.user_id = %s ORDER BY p.id",
                 (user_id,)
             )
             rows = cur.fetchall() or []
@@ -147,16 +150,15 @@ class TimingService:
             cur = db.cursor()
             if profile_id:
                 cur.execute(
-                    "UPDATE qd_timing_profiles SET name=?, stack_mode=?, updated_at=NOW() "
-                    "WHERE id=? AND user_id=?",
+                    "UPDATE qd_timing_profiles SET name=%s, stack_mode=%s, updated_at=NOW() "
+                    "WHERE id=%s AND user_id=%s",
                     (name, stack_mode, profile_id, user_id)
                 )
-                # Replace items
-                cur.execute("DELETE FROM qd_timing_profile_items WHERE profile_id=?", (profile_id,))
+                cur.execute("DELETE FROM qd_timing_profile_items WHERE profile_id=%s", (profile_id,))
             else:
                 cur.execute(
                     "INSERT INTO qd_timing_profiles (user_id, name, stack_mode) "
-                    "VALUES (?,?,?) RETURNING id",
+                    "VALUES (%s,%s,%s) RETURNING id",
                     (user_id, name, stack_mode)
                 )
                 profile_id = cur.fetchone()["id"]
@@ -166,16 +168,18 @@ class TimingService:
                 if ti_id:
                     cur.execute(
                         "INSERT INTO qd_timing_profile_items (profile_id, timing_indicator_id, sort_order) "
-                        "VALUES (?,?,?) ON CONFLICT (profile_id, timing_indicator_id) DO UPDATE SET sort_order=?",
+                        "VALUES (%s,%s,%s) ON CONFLICT (profile_id, timing_indicator_id) DO UPDATE SET sort_order=%s",
                         (profile_id, ti_id, idx, idx)
                     )
+            db.commit()
             cur.close()
         return profile_id
 
     def delete_profile(self, profile_id: int, user_id: int) -> bool:
         with get_db_connection() as db:
             cur = db.cursor()
-            cur.execute("DELETE FROM qd_timing_profiles WHERE id=? AND user_id=?", (profile_id, user_id))
+            cur.execute("DELETE FROM qd_timing_profiles WHERE id=%s AND user_id=%s", (profile_id, user_id))
+            db.commit()
             affected = cur.rowcount
             cur.close()
         return affected > 0
@@ -189,6 +193,7 @@ class TimingService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         kline_cache: Optional[Dict] = None,
+        override_symbol: Optional[str] = None,
     ) -> Optional[pd.DataFrame]:
         """
         计算择时组合的每日乘数,返回 DataFrame:
@@ -208,7 +213,7 @@ class TimingService:
             ti = self.get_indicator(item["id"], user_id)
             if not ti:
                 continue
-            df_ti = self._run_timing_indicator(ti, start_date, end_date, kline_cache)
+            df_ti = self._run_timing_indicator(ti, start_date, end_date, kline_cache, override_symbol)
             if df_ti is not None:
                 timing_dfs.append((ti, df_ti))
 
@@ -258,10 +263,14 @@ class TimingService:
         return result
 
     def _run_timing_indicator(
-        self, ti: Dict, start_date: str = None, end_date: str = None, kline_cache: Dict = None
+        self, ti: Dict, start_date: str = None, end_date: str = None,
+        kline_cache: Dict = None, override_symbol: str = None,
     ) -> Optional[pd.DataFrame]:
         """运行单个择时指标,返回含 bullish/bearish 列的 DataFrame"""
-        symbol = ti.get("symbol", "")
+        symbol = (ti.get("symbol") or "").strip()
+        # 如果指标未指定标的,使用策略传入的标的(个股级别择时)
+        if not symbol and override_symbol:
+            symbol = override_symbol
         market = ti.get("market", "CNStock")
         timeframe = ti.get("timeframe", "1D")
         code = ti.get("indicator_code", "")
